@@ -1,91 +1,108 @@
-#
-# FBMark(Balázs) DN külön csapatokra embereket generáló scriptje(Cskt és AlCskt még nem tudja bevenni csak sima csapattagokat)
-#
-import pandas as pd
+import sys
 import os
-import tkinter as tk
-from tkinter import filedialog, messagebox
+import re
+import pandas as pd
+from PyQt6.QtWidgets import (
+    QApplication, QWidget, QLabel,
+    QLineEdit, QPushButton, QFileDialog,
+    QVBoxLayout, QMessageBox
+)
 
-def process_file():
-    # Ask user for the Excel file
-    file_path = filedialog.askopenfilename(title="Valaszd ki az Excel filet(.xlsx)", filetypes=[("Excel Files", "*.xlsx")])
-    if not file_path:
-        return
 
-    # Ask user for the team name
-    csapatnev = team_entry.get().strip()
-    if not csapatnev:
-        messagebox.showerror("Error", "Adj meg egy csapatnevet!")
-        return
+class DNApp(QWidget):
+    def __init__(self):
+        super().__init__()
 
-    try:
-        df = pd.read_excel(file_path)
+        self.setWindowTitle("DN Csapattagok szeparáló")
+        self.setMinimumWidth(500)
 
-        # Filter for the specific row where Csapatnev matches
-        filtered_df = df[df["Csapatnév:"] == csapatnev]
+        layout = QVBoxLayout()
 
-        if filtered_df.empty:
-            messagebox.showerror("Error", f"Nincs ilyen csapatnév '{csapatnev}'.")
+        self.label = QLabel("Add meg a csapatnevet pontosan ahogy a sheets-ben van:")
+        layout.addWidget(self.label)
+
+        self.team_input = QLineEdit()
+        self.team_input.setPlaceholderText("Csapatnév...")
+        layout.addWidget(self.team_input)
+
+        self.button = QPushButton("Válaszd ki az Excel file-t és Dolgozd fel")
+        self.button.clicked.connect(self.process_file)
+        layout.addWidget(self.button)
+
+        self.setLayout(layout)
+
+    def process_file(self):
+        # ✅ Qt file dialog
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Valaszd ki az Excel filet(.xlsx)",
+            "",
+            "Excel Files (*.xlsx)"
+        )
+
+        if not file_path:
             return
 
-        # Define how many columns per member after skipping 22 fields
-        member_columns = 8
-        base_columns = ["Timestamp", "Csapatnév:"]
-        all_headers = list(df.columns)
-        member_start_index = len(base_columns) + 22
+        # ✅ Qt input mező
+        csapatnev = self.team_input.text().strip()
+        if not csapatnev:
+            QMessageBox.critical(self, "Error", "Adj meg egy csapatnevet!")
+            return
 
-        # Process the single matching row
-        row = filtered_df.iloc[0]
-        base_values = [row["Timestamp"], row["Csapatnév:"]]
-        transformed_data = []
+        try:
+            df = pd.read_excel(file_path)
 
-        # Process member data in chunks of 8 columns
-        for i in range(member_start_index, len(all_headers), member_columns):
-            member_data = []
-            for j in range(member_columns):
-                col_index = i + j
-                if col_index < len(all_headers):
-                    member_data.append(row[all_headers[col_index]])
+            filtered_df = df[df["Csapatnév:"] == csapatnev]
 
-            if any(pd.notna(member_data)):  
-                transformed_data.append(base_values + member_data)
+            if filtered_df.empty:
+                QMessageBox.critical(self, "Error", f"Nincs ilyen csapatnév '{csapatnev}'.")
+                return
 
-        # Create new DataFrame
-        new_headers = base_columns + all_headers[member_start_index : member_start_index + member_columns]
-        new_df = pd.DataFrame(transformed_data, columns=new_headers)
+            member_columns = 8
+            base_columns = ["Csapatnév:"]
+            all_headers = list(df.columns)
+            member_start_index = len(base_columns) + 23
 
-        # Ensure output folder exists
-        output_folder = "csapatok"
-        os.makedirs(output_folder, exist_ok=True)  # Creates the folder if it doesn't exist
+            row = filtered_df.iloc[0]
+            base_values = [row["Csapatnév:"]]
+            transformed_data = []
 
-        # Save output file
-        output_file = os.path.join(output_folder, f"{csapatnev}_feldolgozott.xlsx")
-        new_df.to_excel(output_file, index=False)
+            for i in range(member_start_index, len(all_headers), member_columns):
+                member_data = []
+                for j in range(member_columns):
+                    col_index = i + j
+                    if col_index < len(all_headers):
+                        member_data.append(row[all_headers[col_index]])
 
-        messagebox.showinfo("Success", f"Csapat feldolgozva!\nElmentve mint: {output_file}")
+                # ✅ helyes any() használat
+                # Ha a 3. oszlop (index 2) üres → ne vegyük fel
+                if len(member_data) >= 3 and pd.notna(member_data[2]) and str(member_data[2]).strip() != "":
+                    transformed_data.append(base_values + member_data)
 
-    except Exception as e:
-        messagebox.showerror("Error", f"Hiba:\n{e}")
+            new_headers = base_columns + all_headers[
+                member_start_index:member_start_index + member_columns
+            ]
 
-# GUI setup
-root = tk.Tk()
-root.title("DN Csapattagok szeparáló")
+            new_df = pd.DataFrame(transformed_data, columns=new_headers)
 
-# Set window size to 600x300 pixels
-root.geometry("600x300")
+            output_folder = "csapatok"
+            os.makedirs(output_folder, exist_ok=True)
 
-tk.Label(root, text="Add meg a csapatnevet pontosan ahogy a sheets-be van:", font=("Arial", 12)).pack(pady=10)
-team_entry = tk.Entry(root, font=("Arial", 12), width=40)
-team_entry.pack(pady=5)
+            output_file = os.path.join(output_folder, f"{csapatnev}_feldolgozott.xlsx")
+            new_df.to_excel(output_file, index=False)
 
-tk.Button(root, text="Válaszd ki az Excel file-t és Dolgozd fel", command=process_file, font=("Arial", 12), width=30, height=2).pack(pady=20)
+            QMessageBox.information(
+                self,
+                "Success",
+                f"Csapat feldolgozva!\nElmentve mint: {output_file}"
+            )
 
-# Add small text in the lower-left corner
-footer_label_left = tk.Label(root, text="Hajrá ADMIN !!!", font=("Trebuchet MS", 10, "bold"), fg="red", anchor="w")
-footer_label_left.place(x=10, y=270)  # Positioned at bottom-left
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Hiba:\n{e}")
 
-# Add small text in the lower-right corner
-footer_label_right = tk.Label(root, text="By: Kedvenc fotósotok", font=("Trebuchet MS", 10, "bold"), fg="red", anchor="e")
-footer_label_right.place(x=460, y=270)  # Positioned at bottom-right
 
-root.mainloop()
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    window = DNApp()
+    window.show()
+    sys.exit(app.exec())
